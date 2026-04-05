@@ -28,6 +28,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+from fpdf import FPDF
 
 warnings.filterwarnings("ignore")
 
@@ -593,6 +594,111 @@ def load_svm(path: str | Path) -> Optional[dict]:
     except Exception:
         return None
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  PDF GENERATION HELPER
+# ══════════════════════════════════════════════════════════════════════════════
+class ScanReportPDF(FPDF):
+    def header(self):
+        self.set_font("Helvetica", "B", 18)
+        self.set_text_color(20, 30, 50)
+        self.cell(0, 10, "WEB VULNERABILITY SCAN REPORT", ln=True, align="C")
+        self.set_font("Helvetica", "", 10)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align="C")
+        self.cell(0, 6, "Engine: Build Vulnerability Scanner using AI", ln=True, align="C")
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(150, 150, 150)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+def build_pdf_report(df: pd.DataFrame) -> bytes:
+    pdf = ScanReportPDF()
+    pdf.add_page()
+    
+    # ── Executive Summary ──
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 8, "EXECUTIVE SUMMARY", ln=True)
+    pdf.ln(2)
+    
+    total_hosts = df["host"].nunique() if not df.empty else 0
+    total_vulns = len(df)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, f"Total Hosts Scanned: {total_hosts}", ln=True)
+    pdf.cell(0, 6, f"Total Vulnerabilities Detected: {total_vulns}", ln=True)
+    pdf.ln(4)
+    
+    # ── Severity Breakdown ──
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 6, "Severity Breakdown:", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    if not df.empty:
+        counts = df["severity"].value_counts()
+        for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+            c = counts.get(sev, 0)
+            if sev == "CRITICAL": pdf.set_text_color(200, 0, 0)
+            elif sev == "HIGH": pdf.set_text_color(220, 100, 0)
+            elif sev == "MEDIUM": pdf.set_text_color(200, 150, 0)
+            elif sev == "LOW": pdf.set_text_color(0, 150, 200)
+            else: pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 6, f"{sev}: {c}", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(10)
+    
+    # ── Detailed Findings ──
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, "DETAILED FINDINGS BY HOST", ln=True)
+    pdf.ln(2)
+    
+    if not df.empty:
+        # Sort so CRITICAL is at top
+        sorted_df = df.sort_values("severity", key=lambda s: s.map(SEVERITY_ORDER).fillna(99))
+        for host, group in sorted_df.groupby("host"):
+            # Host Header
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_fill_color(40, 50, 70)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(0, 8, f" HOST: {host}", ln=True, fill=True)
+            pdf.ln(2)
+            
+            # Vulns for this host
+            for _, row in group.iterrows():
+                sev = str(row.get("severity", "INFO")).upper()
+                name = str(row.get("name", "Unknown"))
+                cvss = row.get("cvss", "N/A")
+                plugin = row.get("plugin", "N/A")
+                ai_risk = str(row.get("rf_risk", "LOW"))
+                desc = str(row.get("description", ""))
+                
+                # Color code severity title
+                if sev == "CRITICAL": pdf.set_text_color(200, 0, 0)
+                elif sev == "HIGH": pdf.set_text_color(220, 100, 0)
+                elif sev == "MEDIUM": pdf.set_text_color(200, 150, 0)
+                elif sev == "LOW": pdf.set_text_color(0, 150, 200)
+                else: pdf.set_text_color(100, 100, 100)
+                
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 6, f"[{sev}] {name}", ln=True)
+                
+                pdf.set_text_color(80, 80, 80)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.cell(0, 5, f"CVSS Score: {cvss}   |   Plugin ID: {plugin}   |   AI Risk: {ai_risk}", ln=True)
+                
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(50, 50, 50)
+                pdf.multi_cell(0, 5, f"Description: {desc}")
+                pdf.ln(4)
+            
+            pdf.ln(4)
+            
+    try:
+        return bytes(pdf.output())
+    except TypeError:
+        # Fallback for older FPDF versions
+        return pdf.output(dest='S').encode('latin1')
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PLOTLY THEME
@@ -1278,13 +1384,30 @@ with tab_net:
         hide_index=True,
     )
 
-    csv_out = sorted_view.to_csv(index=False).encode()
-    st.download_button(
-        "⬇  EXPORT FILTERED CSV",
-        data=csv_out,
-        file_name=f"scan_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv",
-    )
+    st.markdown("---")
+    sec_label("EXPORT OPTIONS")
+    col_export1, col_export2, col_export3 = st.columns([1, 1, 2])
+    
+    with col_export1:
+        csv_out = sorted_view.to_csv(index=False).encode()
+        st.download_button(
+            "⬇  EXPORT FILTERED CSV",
+            data=csv_out,
+            file_name=f"scan_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        
+    with col_export2:
+        if not sorted_view.empty:
+            pdf_out = build_pdf_report(sorted_view)
+            st.download_button(
+                "⬇  DOWNLOAD PDF REPORT",
+                data=pdf_out,
+                file_name=f"scan_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1644,3 +1767,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
