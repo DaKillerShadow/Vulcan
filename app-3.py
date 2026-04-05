@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore")
 #  PAGE CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="VULCAN AI — Cyber-Stealth",
+    page_title="Build Vulnerability Scanner using AI — Vulcan",
     page_icon="⬡",
     layout="wide",
     initial_sidebar_state="expanded",
