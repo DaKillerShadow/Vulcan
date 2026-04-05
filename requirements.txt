@@ -1,0 +1,24 @@
+# ═══════════════════════════════════════════════════════════════════
+# Vulcan AI — Vulnerability Intelligence Dashboard
+# Requirements
+# Install: pip install -r requirements.txt
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Dashboard ──────────────────────────────────────────────────────
+streamlit>=1.32.0
+
+# ── Scanner ────────────────────────────────────────────────────────
+python-nmap>=0.7.1
+requests>=2.31.0
+urllib3>=2.0.0
+fpdf2>=2.7.9
+
+# ── ML / Data ──────────────────────────────────────────────────────
+numpy>=1.26.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+joblib>=1.3.0
+
+# ── Optional (improvement suggestions from code review) ────────────
+# imbalanced-learn>=0.12.0   # SMOTE for class imbalance
+# xgboost>=2.0.0             # XGBoost alternative to RF
