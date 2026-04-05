@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║          V U L C A N  A I  —  C Y B E R - S T E A L T H        ║
-║      Vulnerability Intelligence Dashboard  ·  v3.0              ║
+║     B U I L D  V U L N E R A B I L I T Y  S C A N N E R          ║
+║                          U S I N G   A I                         ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 Run:  streamlit run app.py
@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore")
 #  PAGE CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Build Vulnerability Scanner using AI — Vulcan",
+    page_title="Build Vulnerability Scanner using AI",
     page_icon="⬡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -204,7 +204,7 @@ section[data-testid="stSidebar"]::before {
 .term-header {
   font-family: 'Orbitron', monospace;
   font-weight: 900;
-  letter-spacing: .06em;
+  letter-spacing: .04em;
   color: var(--green);
   text-shadow: 0 0 30px rgba(0,255,136,.5);
 }
@@ -452,11 +452,6 @@ def _infer_attack_vector(desc: str) -> str:
 
 
 def build_rf_feature_vector(row: pd.Series, rf_bundle: dict) -> np.ndarray:
-    """
-    Synthesise all 7 RF features from the scanner CSV row.
-    Features: base_score, exploitability_score, impact_score,
-              epss_score, epss_perc, vulnerability_encoded, attack_vector_encoded
-    """
     le_vuln   = rf_bundle["le_vuln"]
     le_vector = rf_bundle["le_vector"]
     features  = rf_bundle["expected_features"]
@@ -470,7 +465,7 @@ def build_rf_feature_vector(row: pd.Series, rf_bundle: dict) -> np.ndarray:
     impact            = round(base_score * 0.72, 4)
     epss_score        = EPSS_MAP.get(sev, 0.05)
     epss_perc         = round(epss_score * 0.85, 4)
-    vuln_enc          = 0  # le_vuln was trained on ['Unknown'] only
+    vuln_enc          = 0
 
     av = _infer_attack_vector(desc)
     try:
@@ -491,10 +486,6 @@ def build_rf_feature_vector(row: pd.Series, rf_bundle: dict) -> np.ndarray:
 
 
 def rf_predict_row(row: pd.Series, rf_bundle: dict) -> tuple[str, dict[str, float]]:
-    """
-    Returns (predicted_label, {class: probability}).
-    e.g. ("HIGH", {"HIGH": 0.73, "LOW": 0.27})
-    """
     model     = rf_bundle["model"]
     le_target = rf_bundle["le_target"]
     X = build_rf_feature_vector(row, rf_bundle)
@@ -515,10 +506,6 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
 
 def svm_predict_row(text: str, svm_bundle: dict) -> tuple[str, dict[str, float]]:
-    """
-    Returns (predicted_class, {class: confidence}) using decision_function + softmax.
-    LinearSVC has no predict_proba — we use decision scores as pseudo-probabilities.
-    """
     model     = svm_bundle["model"]
     clf       = model.named_steps["clf"]
     classes   = list(clf.classes_)
@@ -530,7 +517,6 @@ def svm_predict_row(text: str, svm_bundle: dict) -> tuple[str, dict[str, float]]
 
 
 def enrich_df(df: pd.DataFrame, rf_bundle: Optional[dict]) -> pd.DataFrame:
-    """Add rf_risk, rf_prob_high, rf_prob_low, composite_score columns."""
     df = df.copy()
     rf_risks, prob_highs, prob_lows = [], [], []
     for _, row in df.iterrows():
@@ -625,19 +611,14 @@ PLOTLY_LAYOUT = dict(
 #  NETWORK GRAPH BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 def build_network_graph(df: pd.DataFrame) -> go.Figure:
-    """
-    Interactive networkx + plotly force-directed graph.
-    Gateway = central node.  Hosts = outer nodes coloured by RF risk.
-    Edge labels = vulnerability count.
-    """
     if df.empty or "host" not in df.columns:
         fig = go.Figure()
-        fig.update_layout(title="No data", **PLOTLY_LAYOUT)
+        fig.update_layout(**PLOTLY_LAYOUT)
+        fig.update_layout(title="No data")
         return fig
 
     hosts = df["host"].unique().tolist()
 
-    # Identify gateway: lowest IP or first host
     def ip_sort_key(h):
         parts = str(h).split(".")
         try:
@@ -647,7 +628,6 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
 
     gateway = min(hosts, key=ip_sort_key)
 
-    # Build graph
     G = nx.Graph()
     G.add_node("SCANNER", node_type="scanner")
     G.add_node(gateway, node_type="gateway")
@@ -674,10 +654,8 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
         G.add_node(host, node_type=ntype)
         G.add_edge(gateway, host, weight=vuln_count)
 
-    # Spring layout with seed
     pos = nx.spring_layout(G, seed=42, k=2.2)
 
-    # ── Edges ─────────────────────────────────────────────────────────────
     edge_x, edge_y = [], []
     edge_label_x, edge_label_y, edge_label_text = [], [], []
     for u, v, edata in G.edges(data=True):
@@ -704,7 +682,6 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
         hoverinfo="none",
     )
 
-    # ── Nodes ─────────────────────────────────────────────────────────────
     node_traces = []
     for node in G.nodes():
         x, y = pos[node]
@@ -733,7 +710,6 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
             dom    = stats.get("dominant", "LOW")
             prob   = stats.get("risk_prob", 0.3)
             color  = RISK_COLOR.get(dom, "#00ff88")
-            # Scale size by composite risk
             size   = max(14, int(14 + prob * 18))
             symbol = "circle"
             sc     = stats.get("sev_counts", {})
@@ -764,7 +740,6 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
         )
         node_traces.append(trace)
 
-        # Pulsing halo for high-risk nodes
         if ntype == "host" and host_stats.get(node, {}).get("dominant") == "HIGH":
             halo = go.Scatter(
                 x=[x], y=[y],
@@ -780,21 +755,20 @@ def build_network_graph(df: pd.DataFrame) -> go.Figure:
             )
             node_traces.append(halo)
 
-    fig = go.Figure(
-        data=[edge_trace, edge_lbl_trace] + node_traces,
-        layout=go.Layout(
-            **PLOTLY_LAYOUT,
-            title=dict(
-                text="◈ LIVE NETWORK TOPOLOGY",
-                font=dict(family="Orbitron", size=14, color="#00ff88"),
-                x=0.01,
-            ),
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            hovermode="closest",
-            height=540,
-            legend=dict(bgcolor="rgba(0,0,0,0)"),
+    fig = go.Figure(data=[edge_trace, edge_lbl_trace] + node_traces)
+    
+    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(
+        title=dict(
+            text="◈ LIVE NETWORK TOPOLOGY",
+            font=dict(family="Orbitron", size=14, color="#00ff88"),
+            x=0.01,
         ),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        hovermode="closest",
+        height=540,
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
     return fig
 
@@ -844,8 +818,8 @@ def build_gauge(prob_high: float, title: str = "") -> go.Figure:
             ),
         ),
     ))
+    fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        **PLOTLY_LAYOUT,
         height=260,
         margin=dict(l=30, r=30, t=60, b=20),
     )
@@ -880,8 +854,8 @@ def build_prob_bar(prob_dict: dict[str, float], title: str = "") -> go.Figure:
             hovertemplate=f"<b>{cls}</b>: {pct:.1f}%<extra></extra>",
         ))
 
+    fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        **PLOTLY_LAYOUT,
         barmode="stack",
         title=dict(
             text=f"<span style='font-family:Share Tech Mono;font-size:11px;color:#b8c8e0'>{title}</span>",
@@ -921,8 +895,8 @@ def build_sev_bar(df: pd.DataFrame) -> go.Figure:
         textfont=dict(family="Orbitron", size=12, color="#b8c8e0"),
         hovertemplate="%{x}: %{y}<extra></extra>",
     ))
+    fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        **PLOTLY_LAYOUT,
         title=dict(text="◈ SEVERITY DISTRIBUTION",
                    font=dict(family="Orbitron", size=12, color="#00ff88"), x=0.0),
         height=280,
@@ -975,8 +949,8 @@ def build_host_scatter(df: pd.DataFrame) -> go.Figure:
             "Risk: %{customdata[1]}<extra></extra>"
         ),
     ))
+    fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        **PLOTLY_LAYOUT,
         title=dict(text="◈ HOST RISK SCATTER  (bubble size = vuln count)",
                    font=dict(family="Orbitron", size=12, color="#00ff88"), x=0.0),
         height=320,
@@ -1036,13 +1010,13 @@ with st.sidebar:
     st.markdown(
         """
         <div style="padding:.3rem 0 1rem">
-          <div style="font-family:'Orbitron',monospace;font-size:1.25rem;font-weight:900;
-                      color:#00ff88;text-shadow:0 0 20px rgba(0,255,136,.6);letter-spacing:.08em;">
-            ⬡ VULCAN AI
+          <div style="font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:900;
+                      color:#00ff88;text-shadow:0 0 20px rgba(0,255,136,.6);letter-spacing:.05em;line-height:1.2;">
+            ⬡ VULNERABILITY SCANNER<br>&nbsp;&nbsp;USING AI
           </div>
           <div style="font-family:'Share Tech Mono',monospace;font-size:.62rem;
-                      color:#4a6080;letter-spacing:.18em;text-transform:uppercase;margin-top:.2rem;">
-            Cyber-Stealth Intelligence v3.0
+                      color:#4a6080;letter-spacing:.18em;text-transform:uppercase;margin-top:.4rem;">
+            TM471 Graduation Project
           </div>
         </div>
         """,
@@ -1084,7 +1058,6 @@ with st.sidebar:
         default=["HIGH", "MEDIUM", "LOW"],
     )
 
-    # Host filter placeholder (populated after data load)
     host_filter_placeholder = st.empty()
 
     st.markdown("---")
@@ -1133,7 +1106,6 @@ if not raw_df.empty:
 else:
     df_full = pd.DataFrame()
 
-# Host filter in sidebar
 if not df_full.empty and "host" in df_full.columns:
     all_hosts = sorted(df_full["host"].unique().tolist())
     filter_host = host_filter_placeholder.multiselect(
@@ -1143,7 +1115,6 @@ else:
     filter_host = []
     host_filter_placeholder.empty()
 
-# Apply filters
 if not df_full.empty:
     df_view = df_full.copy()
     if filter_sev:
@@ -1162,12 +1133,12 @@ else:
 st.markdown(
     """
     <div style="margin-bottom:1.2rem;border-bottom:1px solid #162035;padding-bottom:.8rem;">
-      <span class="term-header" style="font-size:1.7rem;">
-        ⬡ VULCAN AI &nbsp;/&nbsp; VULNERABILITY INTELLIGENCE
+      <span class="term-header" style="font-size:1.6rem;">
+        ⬡ BUILD VULNERABILITY SCANNER USING AI
       </span>
       <span style="font-family:'Share Tech Mono',monospace;font-size:.72rem;
                    color:#4a6080;margin-left:1.2rem;">
-        CYBER-STEALTH DASHBOARD  ·  RF + SVM ENSEMBLE
+        RF + SVM ENSEMBLE PIPELINE
       </span>
     </div>
     """,
@@ -1242,7 +1213,6 @@ with tab_net:
             fig_net = build_network_graph(df_view)
         st.plotly_chart(fig_net, use_container_width=True, config={"displayModeBar": False})
 
-        # Legend
         st.markdown(
             """
             <div style="display:flex;gap:1.6rem;font-family:'Share Tech Mono',monospace;
@@ -1294,7 +1264,6 @@ with tab_net:
     st.plotly_chart(build_host_scatter(df_view), use_container_width=True,
                     config={"displayModeBar": False})
 
-    # Findings quick table
     sec_label("ACTIVE FINDINGS")
     disp_cols = [c for c in ["host", "severity", "name", "plugin", "cvss",
                               "rf_risk", "rf_prob_high", "composite"] if c in df_view.columns]
@@ -1313,7 +1282,7 @@ with tab_net:
     st.download_button(
         "⬇  EXPORT FILTERED CSV",
         data=csv_out,
-        file_name=f"vulcan_scan_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        file_name=f"scan_report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
         mime="text/csv",
     )
 
@@ -1341,7 +1310,6 @@ with tab_ml:
             )
             sel_row = df_view.iloc[selected_idx]
 
-            # Finding details card
             sev_col = SEVERITY_COLOR.get(str(sel_row.get("severity","INFO")).upper(), "#4a6080")
             st.markdown(
                 f"""
@@ -1386,13 +1354,11 @@ with tab_ml:
                 unsafe_allow_html=True,
             )
 
-    # ── All-hosts RF probability heatmap-style table ──────────────────────
     sec_label("RF PROBABILITY DISTRIBUTION — ALL FINDINGS")
     if not df_view.empty:
         col_prob_bar, col_conf_table = st.columns([3, 2], gap="large")
 
         with col_prob_bar:
-            # Sorted bar: all findings by P(HIGH)
             sorted_probs = df_view.sort_values("rf_prob_high", ascending=True).tail(20)
             short_labels = [
                 f"{r['host']} / {str(r.get('name',''))[:30]}…"
@@ -1413,8 +1379,8 @@ with tab_ml:
                 textfont=dict(family="Share Tech Mono", size=9, color="#b8c8e0"),
                 hovertemplate="%{y}<br>P(HIGH): %{x:.1f}%<extra></extra>",
             ))
+            fig_hbar.update_layout(**PLOTLY_LAYOUT)
             fig_hbar.update_layout(
-                **PLOTLY_LAYOUT,
                 title=dict(
                     text="◈ P(HIGH RISK) per finding — top 20  [predict_proba]",
                     font=dict(family="Orbitron", size=11, color="#00ff88"), x=0.0,
@@ -1442,7 +1408,6 @@ with tab_ml:
             conf_df = conf_df.sort_values("P(HIGH) %", ascending=False)
             st.dataframe(conf_df, use_container_width=True, height=380, hide_index=True)
 
-    # ── SVM Payload Classifier ─────────────────────────────────────────────
     sec_label("SVM PAYLOAD CLASSIFIER — ATTACK-TYPE ANALYSIS")
     sv_col1, sv_col2 = st.columns([1, 1], gap="large")
 
@@ -1489,7 +1454,6 @@ with tab_ml:
                     """,
                     unsafe_allow_html=True,
                 )
-                # Stacked confidence bar
                 top_dict = dict(top3)
                 st.plotly_chart(
                     build_prob_bar(top_dict, "TOP-3 CLASS DECISION CONFIDENCE (softmax)"),
@@ -1498,7 +1462,6 @@ with tab_ml:
                 )
 
     with sv_col2:
-        # Batch SVM on all descriptions
         sec_label("BATCH CLASSIFICATION")
         if svm_bundle is not None and not df_view.empty:
             if st.button("⬡  RUN SVM ON ALL FINDINGS", use_container_width=True):
@@ -1514,7 +1477,6 @@ with tab_ml:
                 batch_df["svm_confidence"] = [f"{c:.1f}%" for c in svm_confs]
                 st.dataframe(batch_df, use_container_width=True, height=340, hide_index=True)
 
-                # SVM class distribution chart
                 cls_counts = pd.Series(svm_preds).value_counts()
                 pal = ["#00ff88","#ffb300","#ff2d2d","#00e5ff","#a78bfa",
                        "#f472b6","#34d399","#60a5fa","#fbbf24","#818cf8","#ff7a00"]
@@ -1526,8 +1488,8 @@ with tab_ml:
                     textposition="outside",
                     textfont=dict(family="Share Tech Mono", size=9, color="#b8c8e0"),
                 ))
+                fig_cls.update_layout(**PLOTLY_LAYOUT)
                 fig_cls.update_layout(
-                    **PLOTLY_LAYOUT,
                     title=dict(text="◈ SVM CLASS DISTRIBUTION",
                                font=dict(family="Orbitron", size=11, color="#00ff88"), x=0),
                     height=240, bargap=0.3,
@@ -1552,7 +1514,6 @@ with tab_remed:
     if df_view.empty:
         st.info("No findings loaded.")
     else:
-        # Build deduplicated remediation queue sorted by priority
         remed_queue: list[dict] = []
         seen_plugins: set[str] = set()
 
@@ -1575,7 +1536,6 @@ with tab_remed:
                 "remed":    rdb,
             })
 
-        # Summary metrics
         prio_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for item in remed_queue:
             p = item["remed"].get("priority", "MEDIUM")
@@ -1587,7 +1547,6 @@ with tab_remed:
         rc3.metric("🟡 Medium Priority", prio_counts["MEDIUM"])
         rc4.metric("🔵 Low Priority",    prio_counts["LOW"])
 
-        # Priority filter
         remed_filter = st.multiselect(
             "Filter by remediation priority",
             ["HIGH", "MEDIUM", "LOW"],
@@ -1612,7 +1571,6 @@ with tab_remed:
                 f"[Plugin {item['plugin']}]  {rdb['title']}  —  Priority: {priority}",
                 expanded=(priority == "HIGH"),
             ):
-                # Header row
                 st.markdown(
                     f"""
                     <div style="display:flex;gap:2rem;font-family:'Share Tech Mono',monospace;
@@ -1627,13 +1585,11 @@ with tab_remed:
                     """,
                     unsafe_allow_html=True,
                 )
-                # Vulnerability name
                 st.markdown(
                     f"<div style='font-family:Share Tech Mono;font-size:.75rem;"
                     f"color:#b8c8e0;margin-bottom:.8rem;'>{item['name']}</div>",
                     unsafe_allow_html=True,
                 )
-                # Steps
                 st.markdown(
                     remed_card(
                         rdb["title"],
@@ -1644,7 +1600,6 @@ with tab_remed:
                     unsafe_allow_html=True,
                 )
 
-        # Remediation export
         st.markdown("---")
         sec_label("EXPORT REMEDIATION PLAN")
         plan_rows = []
@@ -1669,7 +1624,7 @@ with tab_remed:
         st.download_button(
             "⬇  EXPORT FULL REMEDIATION PLAN (CSV)",
             data=plan_csv,
-            file_name=f"vulcan_remediation_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"remediation_plan_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             use_container_width=False,
         )
@@ -1683,7 +1638,7 @@ st.markdown(
     <div style="margin-top:2.5rem;padding-top:.8rem;border-top:1px solid #162035;
                 font-family:'Share Tech Mono',monospace;font-size:.62rem;color:#162035;
                 display:flex;justify-content:space-between;">
-      <span>VULCAN AI  ·  CYBER-STEALTH v3.0  ·  RF + SVM ENSEMBLE PIPELINE</span>
+      <span>BUILD VULNERABILITY SCANNER USING AI  ·  GRADUATION PROJECT</span>
       <span>⚠ AUTHORISED USE ONLY — SCAN ONLY NETWORKS YOU OWN OR HAVE EXPLICIT PERMISSION FOR</span>
     </div>
     """,
