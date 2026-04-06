@@ -1868,7 +1868,7 @@ with tab_help:
               while the cloud dashboard acts as the "brain" to process the data using Machine Learning.
               <br><br>
               <b>Component 1: The Scanner (Local Machine)</b><br>
-              A custom Python script (`network_web_scanner_V2.py`) runs locally on your machine or inside a target network. It actively probes IP addresses, extracts banners, and checks for web/network misconfigurations. It outputs the findings as a CSV file.
+              A custom Python script (`network_web_scanner_V2.py`) runs locally on your machine or inside a target network. It actively probes IP addresses and URLs, extracts banners, and checks for web/network misconfigurations. It outputs the findings as a CSV file.
               <br><br>
               <b>Component 2: The Intelligence Dashboard (Cloud)</b><br>
               This Streamlit interface ingests the scanner's raw CSV data. It passes the findings through a pre-trained <b>Random Forest Pipeline</b> to predict risk probability, and utilizes a <b>Support Vector Machine (SVM)</b> to classify attack payloads.
@@ -1885,7 +1885,7 @@ with tab_help:
               <div class="guide-title">STEP 1: RUN THE LOCAL SCANNER</div>
               Open your local terminal/command prompt and execute the scanning engine:
               <br><code style="color:#ffb300;background:#060a10;padding:2px 6px;border-radius:2px;margin:5px 0;display:inline-block;">python network_web_scanner_V2.py</code><br>
-              When prompted, enter the target IP address or CIDR range (e.g., <i>192.168.1.1</i> or <i>10.0.0.0/24</i>). Wait for the scan to complete. The script will generate a file named <b>report_from_scan_transfer_to_ai.csv</b>.
+              When prompted, enter the target for your scan. For a <b>Network Scan</b>, enter an IP address or CIDR (e.g., <i>192.168.1.1</i> or <i>10.0.0.0/24</i>). For a <b>Web Scan</b>, enter a domain or URL (e.g., <i>example.com</i> or <i>http://testphp.vulnweb.com</i>). Wait for the scan to complete. The script will generate a file named <b>report_from_scan_transfer_to_ai.csv</b>.
             </div>
             
             <div class="guide-step">
@@ -1966,3 +1966,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
