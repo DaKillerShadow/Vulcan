@@ -1,4 +1,4 @@
-host,severity,name,plugin,cvss,description
+Host,severity,name,plugin,cvss,description
 192.168.1.1,LOW,Web Server Transmits Cleartext Credentials,26194,2.6,Credentials or data transmitted over unencrypted HTTP
 192.168.1.1,INFO,Missing or Permissive Strict-Transport-Security HTTP Response Header,50345,N/A,Missing Strict-Transport-Security security header
 192.168.1.1,INFO,Missing or Permissive Strict-Transport-Security HTTP Response Header,50345,N/A,Missing Strict-Transport-Security security header
@@ -7,3 +7,4 @@ host,severity,name,plugin,cvss,description
 192.168.1.9,MEDIUM,Web Application Potentially Vulnerable to Clickjacking,85582,4.3,Missing X-Frame-Options security header
 192.168.1.9,INFO,Missing or Permissive Strict-Transport-Security HTTP Response Header,50345,N/A,Missing Strict-Transport-Security security header
 192.168.1.9,INFO,Web Server robots.txt Information Disclosure,10302,N/A,robots.txt file found and discloses crawling rules
+192.168.1.1,HIGH,SSH Weak MAC Algorithms Enabled,71049,7.5,The remote SSH server is configured to allow weak Message Authentication Code algorithms on port 22.
