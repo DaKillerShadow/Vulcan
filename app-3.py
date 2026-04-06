@@ -196,6 +196,20 @@ section[data-testid="stSidebar"]::before {
 .sev-LOW      { background: #001f26; color: #00e5ff; border: 1px solid #00e5ff44; }
 .sev-INFO     { background: #131b26; color: #4a6080; border: 1px solid #4a608044; }
 
+/* ── Category badges ── */
+.cat {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.cat-WEB     { background: #002b1a; color: #34d399; border: 1px solid #34d39944; }
+.cat-NETWORK { background: #0b1c3d; color: #60a5fa; border: 1px solid #60a5fa44; }
+
 /* ── Risk label ── */
 .risk-HIGH   { color:#ff2d2d; font-family:'Orbitron',monospace; font-weight:700; }
 .risk-LOW    { color:#00ff88; font-family:'Orbitron',monospace; font-weight:700; }
@@ -277,6 +291,26 @@ section[data-testid="stSidebar"]::before {
 div[data-testid="stMetricValue"] {
   font-family: 'Orbitron', monospace !important;
   color: var(--green) !important;
+}
+
+/* Custom Guide Steps */
+.guide-step {
+    background: #0b1220;
+    border: 1px solid #162035;
+    border-left: 3px solid #00ff88;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    color: #b8c8e0;
+}
+.guide-title {
+    color: #00ff88;
+    font-size: 0.9rem;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
 }
 </style>
 """
@@ -437,8 +471,23 @@ def get_remediation(plugin_id: str, name: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ML HELPERS
+#  ML HELPERS & DATA ENRICHMENT
 # ══════════════════════════════════════════════════════════════════════════════
+def classify_vuln_category(row: pd.Series) -> str:
+    """Automatically categorize vulnerability as WEB or NETWORK based on keywords/ports."""
+    desc = str(row.get("description", "")).lower()
+    name = str(row.get("name", "")).lower()
+    plug = str(row.get("plugin", "")).lower()
+    
+    web_keywords = [
+        'http', 'web', 'xss', 'sqli', 'csrf', 'ssrf', 'ssl', 'tls', 
+        'cgi', 'php', 'html', 'apache', 'nginx', 'cross-site', 'injection', 'cookie'
+    ]
+    
+    if any(k in desc or k in name or k in plug for k in web_keywords):
+        return "WEB"
+    return "NETWORK"
+
 def _infer_attack_vector(desc: str) -> str:
     d = str(desc).lower()
     if any(w in d for w in ("network", "http", "remote", "web", "url", "internet")):
@@ -519,6 +568,10 @@ def svm_predict_row(text: str, svm_bundle: dict) -> tuple[str, dict[str, float]]
 
 def enrich_df(df: pd.DataFrame, rf_bundle: Optional[dict]) -> pd.DataFrame:
     df = df.copy()
+    
+    # Apply WEB vs NETWORK Classification
+    df["vuln_category"] = df.apply(classify_vuln_category, axis=1)
+    
     rf_risks, prob_highs, prob_lows = [], [], []
     for _, row in df.iterrows():
         if rf_bundle is not None:
@@ -631,6 +684,20 @@ def build_pdf_report(df: pd.DataFrame) -> bytes:
     pdf.cell(0, 6, f"Total Vulnerabilities Detected: {total_vulns}", ln=True)
     pdf.ln(4)
     
+    # ── Category Breakdown ──
+    web_count = int((df["vuln_category"] == "WEB").sum()) if not df.empty and "vuln_category" in df else 0
+    net_count = int((df["vuln_category"] == "NETWORK").sum()) if not df.empty and "vuln_category" in df else 0
+    
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 6, "Category Breakdown:", ln=True)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 120, 80) # Green
+    pdf.cell(0, 6, f"WEB (Application Layer): {web_count}", ln=True)
+    pdf.set_text_color(40, 80, 180) # Blue
+    pdf.cell(0, 6, f"NETWORK (Infrastructure/Ports): {net_count}", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
     # ── Severity Breakdown ──
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 6, "Severity Breakdown:", ln=True)
@@ -664,40 +731,59 @@ def build_pdf_report(df: pd.DataFrame) -> bytes:
             pdf.cell(0, 8, f" HOST: {host}", ln=True, fill=True)
             pdf.ln(2)
             
-            # Vulns for this host
-            for _, row in group.iterrows():
-                sev = str(row.get("severity", "INFO")).upper()
-                name = str(row.get("name", "Unknown"))
-                cvss = row.get("cvss", "N/A")
-                plugin = row.get("plugin", "N/A")
-                ai_risk = str(row.get("rf_risk", "LOW"))
-                desc = str(row.get("description", ""))
+            # Split by Category
+            for cat in ["WEB", "NETWORK"]:
+                cat_group = group[group["vuln_category"] == cat]
+                if cat_group.empty:
+                    continue
                 
-                # Color code severity title
-                if sev == "CRITICAL": pdf.set_text_color(200, 0, 0)
-                elif sev == "HIGH": pdf.set_text_color(220, 100, 0)
-                elif sev == "MEDIUM": pdf.set_text_color(200, 150, 0)
-                elif sev == "LOW": pdf.set_text_color(0, 150, 200)
-                else: pdf.set_text_color(100, 100, 100)
-                
+                # Category Sub-Header
                 pdf.set_font("Helvetica", "B", 10)
-                pdf.cell(0, 6, f"[{sev}] {name}", ln=True)
+                if cat == "WEB":
+                    pdf.set_text_color(0, 120, 80)
+                    pdf.cell(0, 6, "   ▶ WEB APPLICATION FINDINGS", ln=True)
+                else:
+                    pdf.set_text_color(40, 80, 180)
+                    pdf.cell(0, 6, "   ▶ NETWORK INFRASTRUCTURE FINDINGS", ln=True)
                 
-                pdf.set_text_color(80, 80, 80)
-                pdf.set_font("Helvetica", "", 9)
-                pdf.cell(0, 5, f"CVSS Score: {cvss}   |   Plugin ID: {plugin}   |   AI Risk: {ai_risk}", ln=True)
+                pdf.ln(1)
+
+                # Vulns for this category
+                for _, row in cat_group.iterrows():
+                    sev = str(row.get("severity", "INFO")).upper()
+                    name = str(row.get("name", "Unknown"))
+                    cvss = row.get("cvss", "N/A")
+                    plugin = row.get("plugin", "N/A")
+                    ai_risk = str(row.get("rf_risk", "LOW"))
+                    desc = str(row.get("description", ""))
+                    
+                    # Color code severity title
+                    if sev == "CRITICAL": pdf.set_text_color(200, 0, 0)
+                    elif sev == "HIGH": pdf.set_text_color(220, 100, 0)
+                    elif sev == "MEDIUM": pdf.set_text_color(200, 150, 0)
+                    elif sev == "LOW": pdf.set_text_color(0, 150, 200)
+                    else: pdf.set_text_color(100, 100, 100)
+                    
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.cell(0, 6, f"      [{sev}] {name}", ln=True)
+                    
+                    pdf.set_text_color(80, 80, 80)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.cell(0, 5, f"      CVSS Score: {cvss}   |   Plugin ID: {plugin}   |   AI Risk: {ai_risk}", ln=True)
+                    
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.set_text_color(50, 50, 50)
+                    # Use a left margin for the description
+                    pdf.set_x(15)
+                    pdf.multi_cell(0, 5, f"Description: {desc}")
+                    pdf.set_x(10) # Reset x
+                    pdf.ln(3)
                 
-                pdf.set_font("Helvetica", "I", 9)
-                pdf.set_text_color(50, 50, 50)
-                pdf.multi_cell(0, 5, f"Description: {desc}")
-                pdf.ln(4)
-            
             pdf.ln(4)
             
     try:
         return bytes(pdf.output())
     except TypeError:
-        # Fallback for older FPDF versions
         return pdf.output(dest='S').encode('latin1')
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1082,6 +1168,10 @@ def sev_badge(s: str) -> str:
     s = str(s).upper()
     return f'<span class="sev sev-{s}">{s}</span>'
 
+def cat_badge(c: str) -> str:
+    c = str(c).upper()
+    return f'<span class="cat cat-{c}">{c}</span>'
+
 
 def risk_span(r: str) -> str:
     r = str(r).upper()
@@ -1153,6 +1243,11 @@ with st.sidebar:
         "letter-spacing:.14em;text-transform:uppercase;margin-top:.8rem;'>◈ FILTERS</p>",
         unsafe_allow_html=True,
     )
+    filter_category = st.multiselect(
+        "Vulnerability Type",
+        ["WEB", "NETWORK"],
+        default=["WEB", "NETWORK"],
+    )
     filter_sev = st.multiselect(
         "Severity",
         ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
@@ -1223,6 +1318,8 @@ else:
 
 if not df_full.empty:
     df_view = df_full.copy()
+    if filter_category:
+        df_view = df_view[df_view["vuln_category"].isin(filter_category)]
     if filter_sev:
         df_view = df_view[df_view["severity"].isin(filter_sev)]
     if filter_risk:
@@ -1270,28 +1367,24 @@ if df_full.empty:
 # ══════════════════════════════════════════════════════════════════════════════
 #  KPI ROW
 # ══════════════════════════════════════════════════════════════════════════════
-total_hosts    = df_view["host"].nunique() if "host" in df_view else 0
 total_vulns    = len(df_view)
+web_count      = int((df_view["vuln_category"] == "WEB").sum()) if not df_view.empty else 0
+network_count  = int((df_view["vuln_category"] == "NETWORK").sum()) if not df_view.empty else 0
 critical_count = int((df_view["severity"] == "CRITICAL").sum())
 high_count     = int((df_view["rf_risk"] == "HIGH").sum())
-avg_risk_score = df_view["composite"].mean() if "composite" in df_view else 0.0
-avg_prob_high  = df_view["rf_prob_high"].mean() if "rf_prob_high" in df_view else 0.0
 
 kpi_html = (
     '<div class="kpi-row">'
-    + kpi_card("Hosts Scanned",    total_hosts,       "#00e5ff",
-               sub=f"{len(df_full['host'].unique())} total in dataset")
     + kpi_card("Total Findings",   total_vulns,       "#00ff88",
                sub="after active filters")
+    + kpi_card("Web Vulns",        web_count,         "#34d399",
+               sub="Application Layer (HTTP/XSS/SQLi)")
+    + kpi_card("Network Vulns",    network_count,     "#60a5fa",
+               sub="Transport Layer / Open Ports")
     + kpi_card("Critical Alerts",  critical_count,    "#ff2d2d",
                sub="CVSS severity = CRITICAL")
     + kpi_card("AI High-Risk",     high_count,        "#ff7a00",
-               sub=f"RF model P(HIGH) avg {avg_prob_high*100:.0f}%")
-    + kpi_card("Composite Score",  f"{avg_risk_score:.1f}",  "#ffb300",
-               sub="weighted sev + rf_risk")
-    + kpi_card("RF Model",  "LOADED" if rf_bundle else "OFF",
-               "#00ff88" if rf_bundle else "#4a6080",
-               sub="Vulcan_RF_Pipeline_Final")
+               sub="Prioritized by Random Forest")
     + "</div>"
 )
 st.markdown(kpi_html, unsafe_allow_html=True)
@@ -1300,10 +1393,11 @@ st.markdown(kpi_html, unsafe_allow_html=True)
 # ══════════════════════════════════════════════════════════════════════════════
 #  TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_net, tab_ml, tab_remed = st.tabs([
+tab_net, tab_ml, tab_remed, tab_help = st.tabs([
     "  ◈  LIVE NETWORK MAP  ",
     "  ◈  DEEP ML ANALYSIS  ",
     "  ◈  REMEDIATION PLANNER  ",
+    "  ◈  HOW TO USE  ",
 ])
 
 
@@ -1366,18 +1460,15 @@ with tab_net:
                     unsafe_allow_html=True,
                 )
 
-    sec_label("HOST RISK SCATTER")
-    st.plotly_chart(build_host_scatter(df_view), use_container_width=True,
-                    config={"displayModeBar": False})
-
-    sec_label("ACTIVE FINDINGS")
-    disp_cols = [c for c in ["host", "severity", "name", "plugin", "cvss",
-                              "rf_risk", "rf_prob_high", "composite"] if c in df_view.columns]
+    sec_label("ACTIVE FINDINGS (Categorized)")
+    disp_cols = [c for c in ["vuln_category", "host", "severity", "name", "plugin", "cvss",
+                              "rf_risk", "rf_prob_high"] if c in df_view.columns]
     sorted_view = df_view[disp_cols].sort_values(
         "severity", key=lambda s: s.map(SEVERITY_ORDER).fillna(99)
     )
+    
     st.dataframe(
-        sorted_view.style.format({"rf_prob_high": "{:.2%}", "composite": "{:.2f}",
+        sorted_view.style.format({"rf_prob_high": "{:.2%}",
                                    "cvss": lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"}),
         use_container_width=True,
         height=320,
@@ -1423,7 +1514,7 @@ with tab_ml:
             st.info("No findings match active filters.")
         else:
             row_labels = [
-                f"[{r['host']}]  {str(r.get('name',''))[:55]}  (CVSS {r['cvss'] if pd.notna(r['cvss']) else 'N/A'})"
+                f"[{r['vuln_category']}] [{r['host']}] {str(r.get('name',''))[:45]} (CVSS {r['cvss'] if pd.notna(r['cvss']) else 'N/A'})"
                 for _, r in df_view.iterrows()
             ]
             selected_idx = st.selectbox(
@@ -1441,6 +1532,7 @@ with tab_ml:
                             font-family:'Share Tech Mono',monospace;font-size:.78rem;line-height:1.9;">
                   <div style="color:{sev_col};margin-bottom:.4rem;text-transform:uppercase;
                               letter-spacing:.1em;font-size:.7rem;">◈ FINDING DETAILS</div>
+                  <b style="color:#b8c8e0">Category:</b> {cat_badge(str(sel_row.get('vuln_category','NETWORK')))}<br>
                   <b style="color:#b8c8e0">Host&nbsp;&nbsp;&nbsp;:</b> {sel_row.get('host','N/A')}<br>
                   <b style="color:#b8c8e0">Severity:</b> {sev_badge(str(sel_row.get('severity','INFO')))}<br>
                   <b style="color:#b8c8e0">Plugin&nbsp; :</b> {sel_row.get('plugin','N/A')}<br>
@@ -1518,13 +1610,11 @@ with tab_ml:
 
         with col_conf_table:
             sec_label("CONFIDENCE SUMMARY TABLE")
-            conf_df = df_view[["host", "severity", "rf_risk", "rf_prob_high",
-                                "rf_prob_low", "composite"]].copy()
+            conf_df = df_view[["vuln_category", "host", "severity", "rf_risk", "rf_prob_high", "composite"]].copy()
             conf_df["rf_prob_high"] = (conf_df["rf_prob_high"] * 100).round(1)
-            conf_df["rf_prob_low"]  = (conf_df["rf_prob_low"]  * 100).round(1)
             conf_df = conf_df.rename(columns={
+                "vuln_category": "Type",
                 "rf_prob_high": "P(HIGH) %",
-                "rf_prob_low":  "P(LOW) %",
                 "rf_risk":      "AI Risk",
                 "composite":    "Score",
             })
@@ -1595,7 +1685,7 @@ with tab_ml:
                         cls, probs = svm_predict_row(txt, svm_bundle)
                         svm_preds.append(cls)
                         svm_confs.append(max(probs.values()) * 100)
-                batch_df = df_view[["host", "severity", "name", "description"]].copy()
+                batch_df = df_view[["vuln_category", "host", "severity", "name", "description"]].copy()
                 batch_df["svm_class"]      = svm_preds
                 batch_df["svm_confidence"] = [f"{c:.1f}%" for c in svm_confs]
                 st.dataframe(batch_df, use_container_width=True, height=340, hide_index=True)
@@ -1651,6 +1741,7 @@ with tab_remed:
             rdb = get_remediation(plugin, name)
             remed_queue.append({
                 "host":     row.get("host", ""),
+                "vuln_cat": row.get("vuln_category", "NETWORK"),
                 "severity": str(row.get("severity", "INFO")).upper(),
                 "name":     name,
                 "plugin":   plugin,
@@ -1691,7 +1782,7 @@ with tab_remed:
             cvss_str = f"{item['cvss']:.1f}" if pd.notna(item.get("cvss")) else "N/A"
 
             with st.expander(
-                f"[Plugin {item['plugin']}]  {rdb['title']}  —  Priority: {priority}",
+                f"[{item['vuln_cat']}] [Plugin {item['plugin']}] {rdb['title']} — Priority: {priority}",
                 expanded=(priority == "HIGH"),
             ):
                 st.markdown(
@@ -1699,10 +1790,10 @@ with tab_remed:
                     <div style="display:flex;gap:2rem;font-family:'Share Tech Mono',monospace;
                                 font-size:.72rem;color:#4a6080;margin-bottom:.8rem;
                                 padding-bottom:.6rem;border-bottom:1px solid #162035;">
+                      <span>CATEGORY: {cat_badge(item['vuln_cat'])}</span>
                       <span>HOST: <span style='color:#b8c8e0'>{item['host']}</span></span>
                       <span>PLUGIN: <span style='color:{sev_c}'>{item['plugin']}</span></span>
                       <span>SEVERITY: {sev_badge(item['severity'])}</span>
-                      <span>CVSS: <span style='color:{sev_c}'>{cvss_str}</span></span>
                       <span>AI RISK: {risk_span(item['rf_risk'])}</span>
                     </div>
                     """,
@@ -1731,6 +1822,7 @@ with tab_remed:
             for i, step in enumerate(rdb["steps"], 1):
                 plan_rows.append({
                     "Priority":    rdb.get("priority", "MEDIUM"),
+                    "Type":        item["vuln_cat"],
                     "Host":        item["host"],
                     "Plugin":      item["plugin"],
                     "Severity":    item["severity"],
@@ -1750,6 +1842,109 @@ with tab_remed:
             file_name=f"remediation_plan_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             use_container_width=False,
+        )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TAB 4 — HOW TO USE (DOCUMENTATION)
+# ════════════════════════════════════════════════════════════════════════════
+with tab_help:
+    col_help_main, col_help_side = st.columns([2, 1], gap="large")
+    
+    with col_help_main:
+        sec_label("SYSTEM OVERVIEW & ARCHITECTURE")
+        st.markdown(
+            """
+            <div style="background:#0b1220;border:1px solid #162035;border-left:3px solid #00e5ff;
+                        border-radius:3px;padding:1.2rem;margin-bottom:1.5rem;
+                        font-family:'Share Tech Mono',monospace;font-size:.85rem;color:#b8c8e0;line-height:1.6;">
+              <b style="color:#00e5ff;font-size:1rem;">DECOUPLED AI PIPELINE</b><br><br>
+              This project solves alert fatigue in cybersecurity by using a decoupled architecture. 
+              Instead of scanning from the cloud, the heavy lifting is done locally to ensure stealth and legal compliance, 
+              while the cloud dashboard acts as the "brain" to process the data using Machine Learning.
+              <br><br>
+              <b>Component 1: The Scanner (Local Machine)</b><br>
+              A custom Python script (`network_web_scanner_V2.py`) runs locally on your machine or inside a target network. It actively probes IP addresses, extracts banners, and checks for web/network misconfigurations. It outputs the findings as a CSV file.
+              <br><br>
+              <b>Component 2: The Intelligence Dashboard (Cloud)</b><br>
+              This Streamlit interface ingests the scanner's raw CSV data. It passes the findings through a pre-trained <b>Random Forest Pipeline</b> to predict risk probability, and utilizes a <b>Support Vector Machine (SVM)</b> to classify attack payloads.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        sec_label("OPERATIONAL WORKFLOW (STEP-BY-STEP)")
+        
+        st.markdown(
+            """
+            <div class="guide-step">
+              <div class="guide-title">STEP 1: RUN THE LOCAL SCANNER</div>
+              Open your local terminal/command prompt and execute the scanning engine:
+              <br><code style="color:#ffb300;background:#060a10;padding:2px 6px;border-radius:2px;margin:5px 0;display:inline-block;">python network_web_scanner_V2.py</code><br>
+              When prompted, enter the target IP address or CIDR range (e.g., <i>192.168.1.1</i> or <i>10.0.0.0/24</i>). Wait for the scan to complete. The script will generate a file named <b>report_from_scan_transfer_to_ai.csv</b>.
+            </div>
+            
+            <div class="guide-step">
+              <div class="guide-title">STEP 2: UPLOAD RAW DATA</div>
+              On the left sidebar of this dashboard, locate the <b>DATA INPUT</b> section. Upload the CSV file generated in Step 1. The dashboard will immediately parse the data, split findings into WEB vs. NETWORK categories, and populate the KPI metrics.
+            </div>
+            
+            <div class="guide-step">
+              <div class="guide-title">STEP 3: INITIALIZE ML MODELS</div>
+              Ensure the pre-trained Machine Learning models are loaded. Under the <b>ML MODELS</b> section in the sidebar, ensure "Use bundled models" is checked, or manually upload <code>Vulcan_RF_Pipeline_Final.pkl</code> and <code>SVM_best_payload_classifier.pkl</code>. The dashboard will apply AI Risk scoring to the entire dataset.
+            </div>
+            
+            <div class="guide-step">
+              <div class="guide-title">STEP 4: ANALYZE & EXPORT</div>
+              <ul>
+                <li style="margin-bottom:.4rem;"><b>Live Network Map:</b> Visually identify compromised hosts. Red diamond nodes indicate a High-Risk gateway/host based on RF probabilities.</li>
+                <li style="margin-bottom:.4rem;"><b>Deep ML Analysis:</b> Select individual findings to view the exact confidence percentage from the Random Forest model, or use the SVM text box to classify custom payloads.</li>
+                <li style="margin-bottom:.4rem;"><b>Remediation Planner:</b> Generate an actionable, step-by-step mitigation plan prioritized by threat level.</li>
+                <li><b>Export:</b> Scroll to the bottom of the Network Map or Remediation tabs to export professional PDF or CSV reports for management.</li>
+              </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col_help_side:
+        sec_label("UI LEGEND")
+        st.markdown(
+            """
+            <div style="background:#0b1220;border:1px solid #162035;padding:1rem;border-radius:3px;
+                        font-family:'Share Tech Mono',monospace;font-size:.75rem;color:#b8c8e0;line-height:1.8;">
+              <b style="color:#00ff88;">◈ SEVERITY (CVSS)</b><br>
+              <span style="color:#ff2d2d;">CRITICAL</span>: 9.0 - 10.0<br>
+              <span style="color:#ff7a00;">HIGH</span>: 7.0 - 8.9<br>
+              <span style="color:#ffb300;">MEDIUM</span>: 4.0 - 6.9<br>
+              <span style="color:#00e5ff;">LOW</span>: 0.1 - 3.9<br>
+              <span style="color:#4a6080;">INFO</span>: 0.0 (Hardening)<br>
+              <br>
+              <b style="color:#00ff88;">◈ CATEGORIES</b><br>
+              <span style="color:#34d399;">WEB</span>: App Layer (L7)<br>
+              <span style="color:#60a5fa;">NETWORK</span>: Transport (L4)<br>
+              <br>
+              <b style="color:#00ff88;">◈ AI RISK (RF)</b><br>
+              <span style="color:#ff2d2d;">HIGH RISK</span>: P(High) ≥ 60%<br>
+              <span style="color:#ffb300;">MED RISK</span>: P(High) 35-59%<br>
+              <span style="color:#00ff88;">LOW RISK</span>: P(High) < 35%<br>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        sec_label("ETHICS & COMPLIANCE")
+        st.markdown(
+            """
+            <div style="background:#1a0505;border:1px solid #ff2d2d44;padding:1rem;border-radius:3px;
+                        font-family:'Share Tech Mono',monospace;font-size:.7rem;color:#ff2d2d;line-height:1.5;">
+              <b>⚠ WARNING: AUTHORIZED USE ONLY</b><br><br>
+              This tool actively probes networks and web applications. It is strictly for educational purposes and authorized penetration testing.<br><br>
+              Do not execute the backend scanner against any IP address, domain, or network infrastructure where you do not have explicit, written permission from the owner.
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
 
