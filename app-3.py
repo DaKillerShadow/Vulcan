@@ -650,6 +650,10 @@ def load_svm(path: str | Path) -> Optional[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 #  PDF GENERATION HELPER
 # ══════════════════════════════════════════════════════════════════════════════
+def safe_text(text: str) -> str:
+    """Strips unsupported Unicode to prevent FPDF encoding crashes."""
+    return str(text).encode('latin-1', 'replace').decode('latin-1')
+
 class ScanReportPDF(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 18)
@@ -741,21 +745,21 @@ def build_pdf_report(df: pd.DataFrame) -> bytes:
                 pdf.set_font("Helvetica", "B", 10)
                 if cat == "WEB":
                     pdf.set_text_color(0, 120, 80)
-                    pdf.cell(0, 6, "   ▶ WEB APPLICATION FINDINGS", ln=True)
+                    pdf.cell(0, 6, "   > WEB APPLICATION FINDINGS", ln=True)
                 else:
                     pdf.set_text_color(40, 80, 180)
-                    pdf.cell(0, 6, "   ▶ NETWORK INFRASTRUCTURE FINDINGS", ln=True)
+                    pdf.cell(0, 6, "   > NETWORK INFRASTRUCTURE FINDINGS", ln=True)
                 
                 pdf.ln(1)
 
                 # Vulns for this category
                 for _, row in cat_group.iterrows():
-                    sev = str(row.get("severity", "INFO")).upper()
-                    name = str(row.get("name", "Unknown"))
-                    cvss = row.get("cvss", "N/A")
-                    plugin = row.get("plugin", "N/A")
-                    ai_risk = str(row.get("rf_risk", "LOW"))
-                    desc = str(row.get("description", ""))
+                    sev = safe_text(str(row.get("severity", "INFO")).upper())
+                    name = safe_text(str(row.get("name", "Unknown")))
+                    cvss = safe_text(str(row.get("cvss", "N/A")))
+                    plugin = safe_text(str(row.get("plugin", "N/A")))
+                    ai_risk = safe_text(str(row.get("rf_risk", "LOW")))
+                    desc = safe_text(str(row.get("description", "")))
                     
                     # Color code severity title
                     if sev == "CRITICAL": pdf.set_text_color(200, 0, 0)
@@ -1962,4 +1966,3 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
